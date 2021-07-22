@@ -3,7 +3,9 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, staging, trying]
+    branches-ignore:
+      - 'dependabot/**'
+      - staging-squash-merge.tmp
 
 env:
   CARGO_TERM_COLOR: always
@@ -85,7 +87,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run Markdown Lint
-        uses: github/super-linter@v3.17.0
+        uses: docker://ghcr.io/github/super-linter:slim-v4
         env:
           VALIDATE_ALL_CODEBASE: false
           VALIDATE_MARKDOWN: true
@@ -97,7 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - uses: gaurav-nelson/github-action-markdown-link-check@0fe4911067fa322422f325b002d2038ba5602170
+    - uses: gaurav-nelson/github-action-markdown-link-check@9710f0fec812ce0a3b98bef4c9d842fc1f39d976
       with:
         use-quiet-mode: 'yes'
         use-verbose-mode: 'yes'
@@ -153,3 +155,35 @@ jobs:
       - name: Checks dead links
         run: cargo deadlinks --dir target/doc/bevy
         continue-on-error: true
+  
+  check-missing-examples-in-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Check that examples are present in both README and Cargo
+        uses: Weibye/action-internal-link-consistency@1.0.0
+        with:
+          source: './examples/'
+          targets: '[ "./Cargo.toml", "./examples/README.md" ]'
+          file-types: '[".rs"]'
+          exclude-folders: '["./examples/ios"]'
+          exclude-files: '[]'
+
+  check-unused-dependencies:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly
+          override: true
+
+      - name: Installs cargo-udeps
+        run: cargo install cargo-udeps
+
+      - name: Install alsa and udev
+        run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev
+
+      - name: Run cargo udeps
+        run: cargo udeps

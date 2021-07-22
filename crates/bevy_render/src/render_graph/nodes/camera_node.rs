@@ -6,7 +6,7 @@ use crate::{
         RenderResourceContext,
     },
 };
-use bevy_core::AsBytes;
+use bevy_core::bytes_of;
 use bevy_ecs::{
     system::{BoxedSystem, IntoSystem, Local, Query, Res, ResMut},
     world::World,
@@ -169,7 +169,7 @@ pub fn camera_node_system(
             staging_buffer,
             0..MATRIX_SIZE as u64,
             &mut |data, _renderer| {
-                data[0..MATRIX_SIZE].copy_from_slice(view.to_cols_array_2d().as_bytes());
+                data[0..MATRIX_SIZE].copy_from_slice(bytes_of(&view));
             },
         );
         state.command_queue.copy_buffer_to_buffer(
@@ -193,7 +193,7 @@ pub fn camera_node_system(
                     if let Some(view_proj) = camera.get_view_projection(i) {
                         data[i * (VIEW_PROJS_SIZE / VIEW_PROJ_COUNT)
                             ..(i + 1) * VIEW_PROJS_SIZE / VIEW_PROJ_COUNT]
-                            .copy_from_slice(view_proj.to_cols_array_2d().as_bytes());
+                            .copy_from_slice(bytes_of(&view_proj));
                     }
                 }
             },
@@ -216,7 +216,7 @@ pub fn camera_node_system(
             staging_buffer,
             offset..(offset + VEC4_SIZE as u64),
             &mut |data, _renderer| {
-                data[0..VEC4_SIZE].copy_from_slice(position.as_bytes());
+                data[0..VEC4_SIZE].copy_from_slice(bytes_of(&position));
             },
         );
         state.command_queue.copy_buffer_to_buffer(

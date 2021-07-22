@@ -5,11 +5,13 @@ status = [
     "build (nightly, ubuntu-latest)",
     "build-wasm (stable, ubuntu-latest)",
     "build-wasm (nightly, ubuntu-latest)",
-    "build-android",
     "markdownlint",
     "check-markdown-links",
     "run-examples",
     "check-doc",
+    "check-missing-examples-in-docs",
+    "check-unused-dependencies",
 ]
 
 use_squash_merge = true
+block_labels = ["S-Pre-Relicense"]

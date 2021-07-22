@@ -1,3 +1,5 @@
+mod command_queue;
+
 use crate::{
     bundle::Bundle,
     component::Component,
@@ -5,40 +7,12 @@ use crate::{
     world::World,
 };
 use bevy_utils::tracing::debug;
+pub use command_queue::CommandQueue;
 use std::marker::PhantomData;
 
 /// A [`World`] mutation.
 pub trait Command: Send + Sync + 'static {
-    fn write(self: Box<Self>, world: &mut World);
-}
-
-/// A queue of [`Command`]s.
-#[derive(Default)]
-pub struct CommandQueue {
-    commands: Vec<Box<dyn Command>>,
-}
-
-impl CommandQueue {
-    /// Execute the queued [`Command`]s in the world.
-    /// This clears the queue.
-    pub fn apply(&mut self, world: &mut World) {
-        world.flush();
-        for command in self.commands.drain(..) {
-            command.write(world);
-        }
-    }
-
-    /// Push a boxed [`Command`] onto the queue.
-    #[inline]
-    pub fn push_boxed(&mut self, command: Box<dyn Command>) {
-        self.commands.push(command);
-    }
-
-    /// Push a [`Command`] onto the queue.
-    #[inline]
-    pub fn push<T: Command>(&mut self, command: T) {
-        self.push_boxed(Box::new(command));
-    }
+    fn write(self, world: &mut World);
 }
 
 /// A list of commands that will be run to modify a [`World`].
@@ -292,7 +266,7 @@ impl<T> Command for Spawn<T>
 where
     T: Bundle,
 {
-    fn write(self: Box<Self>, world: &mut World) {
+    fn write(self, world: &mut World) {
         world.spawn().insert_bundle(self.bundle);
     }
 }
@@ -310,7 +284,7 @@ where
     I: IntoIterator + Send + Sync + 'static,
     I::Item: Bundle,
 {
-    fn write(self: Box<Self>, world: &mut World) {
+    fn write(self, world: &mut World) {
         world.spawn_batch(self.bundles_iter);
     }
 }
@@ -321,7 +295,7 @@ pub struct Despawn {
 }
 
 impl Command for Despawn {
-    fn write(self: Box<Self>, world: &mut World) {
+    fn write(self, world: &mut World) {
         if !world.despawn(self.entity) {
             debug!("Failed to despawn non-existent entity {:?}", self.entity);
         }
@@ -337,7 +311,7 @@ impl<T> Command for InsertBundle<T>
 where
     T: Bundle + 'static,
 {
-    fn write(self: Box<Self>, world: &mut World) {
+    fn write(self, world: &mut World) {
         world.entity_mut(self.entity).insert_bundle(self.bundle);
     }
 }
@@ -352,22 +326,22 @@ impl<T> Command for Insert<T>
 where
     T: Component,
 {
-    fn write(self: Box<Self>, world: &mut World) {
+    fn write(self, world: &mut World) {
         world.entity_mut(self.entity).insert(self.component);
     }
 }
 
 #[derive(Debug)]
 pub struct Remove<T> {
-    entity: Entity,
-    phantom: PhantomData<T>,
+    pub entity: Entity,
+    pub phantom: PhantomData<T>,
 }
 
 impl<T> Command for Remove<T>
 where
     T: Component,
 {
-    fn write(self: Box<Self>, world: &mut World) {
+    fn write(self, world: &mut World) {
         if let Some(mut entity_mut) = world.get_entity_mut(self.entity) {
             entity_mut.remove::<T>();
         }
@@ -384,7 +358,7 @@ impl<T> Command for RemoveBundle<T>
 where
     T: Bundle,
 {
-    fn write(self: Box<Self>, world: &mut World) {
+    fn write(self, world: &mut World) {
         if let Some(mut entity_mut) = world.get_entity_mut(self.entity) {
             // remove intersection to gracefully handle components that were removed before running
             // this command
@@ -398,7 +372,7 @@ pub struct InsertResource<T: Component> {
 }
 
 impl<T: Component> Command for InsertResource<T> {
-    fn write(self: Box<Self>, world: &mut World) {
+    fn write(self, world: &mut World) {
         world.insert_resource(self.resource);
     }
 }
@@ -408,7 +382,7 @@ pub struct RemoveResource<T: Component> {
 }
 
 impl<T: Component> Command for RemoveResource<T> {
-    fn write(self: Box<Self>, world: &mut World) {
+    fn write(self, world: &mut World) {
         world.remove_resource::<T>();
     }
 }
@@ -417,9 +391,29 @@ impl<T: Component> Command for RemoveResource<T> {
 #[allow(clippy::float_cmp, clippy::approx_constant)]
 mod tests {
     use crate::{
+        component::{ComponentDescriptor, StorageType},
         system::{CommandQueue, Commands},
         world::World,
     };
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    #[derive(Clone, Debug)]
+    struct DropCk(Arc<AtomicUsize>);
+    impl DropCk {
+        fn new_pair() -> (Self, Arc<AtomicUsize>) {
+            let atomic = Arc::new(AtomicUsize::new(0));
+            (DropCk(atomic.clone()), atomic)
+        }
+    }
+
+    impl Drop for DropCk {
+        fn drop(&mut self) {
+            self.0.as_ref().fetch_add(1, Ordering::Relaxed);
+        }
+    }
 
     #[test]
     fn commands() {
@@ -454,10 +448,20 @@ mod tests {
     #[test]
     fn remove_components() {
         let mut world = World::default();
+
+        struct DenseDropCk(DropCk);
+        world
+            .register_component(ComponentDescriptor::new::<DropCk>(StorageType::SparseSet))
+            .unwrap();
+
         let mut command_queue = CommandQueue::default();
+        let (dense_dropck, dense_is_dropped) = DropCk::new_pair();
+        let dense_dropck = DenseDropCk(dense_dropck);
+        let (sparse_dropck, sparse_is_dropped) = DropCk::new_pair();
+
         let entity = Commands::new(&mut command_queue, &world)
             .spawn()
-            .insert_bundle((1u32, 2u64))
+            .insert_bundle((1u32, 2u64, dense_dropck, sparse_dropck))
             .id();
         command_queue.apply(&mut world);
         let results_before = world
@@ -471,8 +475,14 @@ mod tests {
         Commands::new(&mut command_queue, &world)
             .entity(entity)
             .remove::<u32>()
-            .remove_bundle::<(u32, u64)>();
+            .remove_bundle::<(u32, u64, DenseDropCk, DropCk)>();
+
+        assert_eq!(dense_is_dropped.load(Ordering::Relaxed), 0);
+        assert_eq!(sparse_is_dropped.load(Ordering::Relaxed), 0);
         command_queue.apply(&mut world);
+        assert_eq!(dense_is_dropped.load(Ordering::Relaxed), 1);
+        assert_eq!(sparse_is_dropped.load(Ordering::Relaxed), 1);
+
         let results_after = world
             .query::<(&u32, &u64)>()
             .iter(&world)

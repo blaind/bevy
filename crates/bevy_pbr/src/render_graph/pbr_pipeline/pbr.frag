@@ -283,8 +283,6 @@ vec3 reinhard_extended_luminance(vec3 color, float max_white_l) {
     return change_luminance(color, l_new);
 }
 
-#endif
-
 vec3 point_light(PointLight light, float roughness, float NdotV, vec3 N, vec3 V, vec3 R, vec3 F0, vec3 diffuseColor) {
     vec3 light_to_frag = light.pos.xyz - v_WorldPosition.xyz;
     float distance_square = dot(light_to_frag, light_to_frag);
@@ -349,6 +347,8 @@ vec3 dir_light(DirectionalLight light, float roughness, float NdotV, vec3 normal
     return (specular + diffuse) * light.color.rgb * NoL;
 }
 
+#endif
+
 void main() {
     vec4 output_color = base_color;
 #ifdef STANDARDMATERIAL_BASE_COLOR_TEXTURE
@@ -400,7 +400,12 @@ void main() {
     emissive.rgb *= texture(sampler2D(StandardMaterial_emissive_texture, StandardMaterial_emissive_texture_sampler), v_Uv).rgb;
 #    endif
 
-    vec3 V = normalize(CameraPos.xyz - v_WorldPosition.xyz);
+    vec3 V;
+    if (ViewProj[3][3] != 1.0) { // If the projection is not orthographic
+        V = normalize(CameraPos.xyz - v_WorldPosition.xyz); // Only valid for a perpective projection
+    } else {
+        V = normalize(vec3(-ViewProj[0][2],-ViewProj[1][2],-ViewProj[2][2])); // Ortho view vec
+    }
     // Neubelt and Pettineo 2013, "Crafting a Next-gen Material Pipeline for The Order: 1886"
     float NdotV = max(dot(N, V), 1e-4);
 

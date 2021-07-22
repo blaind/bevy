@@ -16,6 +16,8 @@ use downcast_rs::{impl_downcast, Downcast};
 use fixedbitset::FixedBitSet;
 use std::fmt::Debug;
 
+use super::IntoSystemDescriptor;
+
 pub trait Stage: Downcast + Send + Sync {
     /// Runs the stage; this happens once per update.
     /// Implementors must initialize all of their state and systems before running the first time.
@@ -105,7 +107,7 @@ impl SystemStage {
         }
     }
 
-    pub fn single(system: impl Into<SystemDescriptor>) -> Self {
+    pub fn single<Params>(system: impl IntoSystemDescriptor<Params>) -> Self {
         Self::single_threaded().with_system(system)
     }
 
@@ -131,23 +133,19 @@ impl SystemStage {
         self.executor = executor;
     }
 
-    pub fn with_system(mut self, system: impl Into<SystemDescriptor>) -> Self {
+    pub fn with_system<Params>(mut self, system: impl IntoSystemDescriptor<Params>) -> Self {
         self.add_system(system);
         self
     }
 
-    pub fn add_system(&mut self, system: impl Into<SystemDescriptor>) -> &mut Self {
-        self.add_system_inner(system, None);
+    pub fn add_system<Params>(&mut self, system: impl IntoSystemDescriptor<Params>) -> &mut Self {
+        self.add_system_inner(system.into_descriptor(), None);
         self
     }
 
-    fn add_system_inner(
-        &mut self,
-        system: impl Into<SystemDescriptor>,
-        default_run_criteria: Option<usize>,
-    ) {
+    fn add_system_inner(&mut self, system: SystemDescriptor, default_run_criteria: Option<usize>) {
         self.systems_modified = true;
-        match system.into() {
+        match system {
             SystemDescriptor::Exclusive(mut descriptor) => {
                 let insertion_point = descriptor.insertion_point;
                 let criteria = descriptor.run_criteria.take();
@@ -416,9 +414,9 @@ impl SystemStage {
                 && self.uninitialized_before_commands.is_empty()
                 && self.uninitialized_at_end.is_empty()
         );
-        fn unwrap_dependency_cycle_error<Output, Label, Labels: Debug>(
+        fn unwrap_dependency_cycle_error<Node: GraphNode, Output, Labels: Debug>(
             result: Result<Output, DependencyGraphError<Labels>>,
-            nodes: &[impl GraphNode<Label>],
+            nodes: &[Node],
             nodes_description: &'static str,
         ) -> Output {
             match result {
@@ -777,6 +775,7 @@ impl Stage for SystemStage {
             for index in 0..self.run_criteria.len() {
                 let (run_criteria, tail) = self.run_criteria.split_at_mut(index);
                 let mut criteria = &mut tail[0];
+                criteria.update_archetypes(world);
                 match &mut criteria.inner {
                     RunCriteriaInner::Single(system) => criteria.should_run = system.run((), world),
                     RunCriteriaInner::Piped {
@@ -850,6 +849,7 @@ impl Stage for SystemStage {
                 for index in 0..run_criteria.len() {
                     let (run_criteria, tail) = run_criteria.split_at_mut(index);
                     let criteria = &mut tail[0];
+                    criteria.update_archetypes(world);
                     match criteria.should_run {
                         ShouldRun::No => (),
                         ShouldRun::Yes => criteria.should_run = ShouldRun::No,
@@ -1172,7 +1172,7 @@ mod tests {
             .with_system(make_exclusive(0).exclusive_system().before("1"))
             .with_system_set(
                 SystemSet::new()
-                    .with_run_criteria(every_other_time.system())
+                    .with_run_criteria(every_other_time)
                     .with_system(make_exclusive(1).exclusive_system().label("1")),
             )
             .with_system(make_exclusive(2).exclusive_system().after("1"));
@@ -1394,7 +1394,7 @@ mod tests {
                 make_parallel!(0)
                     .system()
                     .label("0")
-                    .with_run_criteria(every_other_time.system()),
+                    .with_run_criteria(every_other_time),
             )
             .with_system(make_parallel!(1).system().after("0"));
         stage.run(&mut world);
@@ -1429,7 +1429,7 @@ mod tests {
         // Reusing criteria.
         world.get_resource_mut::<Vec<usize>>().unwrap().clear();
         let mut stage = SystemStage::parallel()
-            .with_system_run_criteria(every_other_time.system().label("every other time"))
+            .with_system_run_criteria(every_other_time.label("every other time"))
             .with_system(make_parallel!(0).system().before("1"))
             .with_system(
                 make_parallel!(1)
@@ -2095,5 +2095,78 @@ mod tests {
                 *changed_entities
             );
         }
+    }
+
+    #[test]
+    fn run_criteria_with_query() {
+        struct Foo;
+
+        fn even_number_of_entities_critiera(query: Query<&Foo>) -> ShouldRun {
+            if query.iter().len() % 2 == 0 {
+                ShouldRun::Yes
+            } else {
+                ShouldRun::No
+            }
+        }
+
+        fn spawn_entity(mut commands: crate::prelude::Commands) {
+            commands.spawn().insert(Foo);
+        }
+
+        fn count_entities(query: Query<&Foo>, mut res: ResMut<Vec<usize>>) {
+            res.push(query.iter().len());
+        }
+
+        let mut world = World::new();
+        world.insert_resource(Vec::<usize>::new());
+        let mut stage = SystemStage::parallel()
+            .with_system(spawn_entity.system().label("spawn"))
+            .with_system_set(
+                SystemSet::new()
+                    .with_run_criteria(even_number_of_entities_critiera.system())
+                    .with_system(count_entities.system().before("spawn")),
+            );
+        stage.run(&mut world);
+        stage.run(&mut world);
+        stage.run(&mut world);
+        stage.run(&mut world);
+        assert_eq!(*world.get_resource::<Vec<usize>>().unwrap(), vec![0, 2]);
+    }
+
+    #[test]
+    fn stage_run_criteria_with_query() {
+        struct Foo;
+
+        fn even_number_of_entities_critiera(query: Query<&Foo>) -> ShouldRun {
+            if query.iter().len() % 2 == 0 {
+                ShouldRun::Yes
+            } else {
+                ShouldRun::No
+            }
+        }
+
+        fn spawn_entity(mut commands: crate::prelude::Commands) {
+            commands.spawn().insert(Foo);
+        }
+
+        fn count_entities(query: Query<&Foo>, mut res: ResMut<Vec<usize>>) {
+            res.push(query.iter().len());
+        }
+
+        let mut world = World::new();
+        world.insert_resource(Vec::<usize>::new());
+        let mut stage_spawn = SystemStage::parallel().with_system(spawn_entity.system());
+        let mut stage_count = SystemStage::parallel()
+            .with_run_criteria(even_number_of_entities_critiera.system())
+            .with_system(count_entities.system());
+        stage_count.run(&mut world);
+        stage_spawn.run(&mut world);
+        stage_count.run(&mut world);
+        stage_spawn.run(&mut world);
+        stage_count.run(&mut world);
+        stage_spawn.run(&mut world);
+        stage_count.run(&mut world);
+        stage_spawn.run(&mut world);
+        assert_eq!(*world.get_resource::<Vec<usize>>().unwrap(), vec![0, 2]);
     }
 }
