@@ -65,11 +65,13 @@ impl Camera {
         Some(screen_space_coords)
     }
 
-    pub fn get_view_projection(&self, view_idx: usize) -> Option<Mat4> {
+    pub fn get_view_projection(&self, view_idx: usize, view: Mat4) -> Option<Mat4> {
         let projection_matrix = self.projection_matrices.get(view_idx)?;
-        let position = self.position_matrices.get(view_idx)?;
-
-        Some(*projection_matrix * position.inverse())
+        if let Some(position) = self.position_matrices.get(view_idx) {
+            Some(*projection_matrix * position.inverse())
+        } else {
+            Some(*projection_matrix * view.inverse())
+        }
     }
 }
 

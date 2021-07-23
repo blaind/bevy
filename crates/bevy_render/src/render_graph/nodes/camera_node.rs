@@ -190,7 +190,7 @@ pub fn camera_node_system(
             range,
             &mut |data, _renderer| {
                 for i in 0..VIEW_PROJ_COUNT {
-                    if let Some(view_proj) = camera.get_view_projection(i) {
+                    if let Some(view_proj) = camera.get_view_projection(i, view) {
                         data[i * (VIEW_PROJS_SIZE / VIEW_PROJ_COUNT)
                             ..(i + 1) * VIEW_PROJS_SIZE / VIEW_PROJ_COUNT]
                             .copy_from_slice(bytes_of(&view_proj));
