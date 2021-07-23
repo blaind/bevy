@@ -14,7 +14,7 @@ use bevy_transform::components::{GlobalTransform, Transform};
 use bevy_window::{WindowCreated, WindowId, WindowResized, Windows};
 use serde::{Deserialize, Serialize};
 
-#[derive(Default, Debug, Reflect)]
+#[derive(Debug, Reflect)]
 #[reflect(Component)]
 pub struct Camera {
     pub projection_matrices: Vec<Mat4>,
@@ -25,6 +25,18 @@ pub struct Camera {
     pub window: WindowId,
     #[reflect(ignore)]
     pub depth_calculation: DepthCalculation,
+}
+
+impl Default for Camera {
+    fn default() -> Self {
+        Camera {
+            projection_matrices: vec![Mat4::default()],
+            position_matrices: Vec::new(),
+            name: None,
+            window: WindowId::default(),
+            depth_calculation: DepthCalculation::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Reflect, Serialize, Deserialize)]
