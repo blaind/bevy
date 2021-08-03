@@ -8,6 +8,9 @@ pub trait CameraProjection {
     fn get_projection_matrix(&self) -> Mat4;
     fn update(&mut self, width: f32, height: f32);
     fn depth_calculation(&self) -> DepthCalculation;
+    fn get_fov(&self) -> f32;
+    fn get_near(&self) -> f32;
+    fn get_far(&self) -> f32;
 }
 
 #[derive(Debug, Clone, Reflect)]
@@ -30,6 +33,18 @@ impl CameraProjection for PerspectiveProjection {
 
     fn depth_calculation(&self) -> DepthCalculation {
         DepthCalculation::Distance
+    }
+
+    fn get_fov(&self) -> f32 {
+        self.fov
+    }
+
+    fn get_near(&self) -> f32 {
+        self.near
+    }
+
+    fn get_far(&self) -> f32 {
+        self.far
     }
 }
 
@@ -143,6 +158,18 @@ impl CameraProjection for OrthographicProjection {
 
     fn depth_calculation(&self) -> DepthCalculation {
         self.depth_calculation
+    }
+
+    fn get_fov(&self) -> f32 {
+        unimplemented!()
+    }
+
+    fn get_near(&self) -> f32 {
+        self.near
+    }
+
+    fn get_far(&self) -> f32 {
+        self.far
     }
 }
 
