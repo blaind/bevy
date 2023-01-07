@@ -138,25 +138,75 @@ impl Plugin for RenderPlugin {
             .init_debug_asset_loader::<ShaderLoader>();
 
         if let Some(backends) = options.backends {
-            let windows = app.world.resource_mut::<bevy_window::Windows>();
-            let instance = wgpu::Instance::new(backends);
+            let (render_instance, device, queue, adapter_info, render_adapter) = match (
+                app.world.remove_resource::<renderer::RenderInstance>(),
+                app.world.get_resource::<renderer::RenderDevice>(),
+                app.world.get_resource::<renderer::RenderQueue>(),
+                app.world.get_resource::<renderer::RenderAdapterInfo>(),
+                app.world.get_resource::<renderer::RenderAdapter>(),
+            ) {
+                (
+                    Some(render_instance),
+                    Some(device),
+                    Some(queue),
+                    Some(adapter_info),
+                    Some(render_adapter),
+                ) => (
+                    render_instance,
+                    device.clone(),
+                    queue.clone(),
+                    adapter_info.clone(),
+                    render_adapter.clone(),
+                ),
+                (None, None, None, None, None) => {
+                    let windows = app.world.resource_mut::<bevy_window::Windows>();
 
-            let surface = windows
-                .get_primary()
-                .and_then(|window| window.raw_handle())
-                .map(|wrapper| unsafe {
-                    let handle = wrapper.get_handle();
-                    instance.create_surface(&handle)
-                });
+                    let instance = wgpu::Instance::new(backends);
 
-            let request_adapter_options = wgpu::RequestAdapterOptions {
-                power_preference: options.power_preference,
-                compatible_surface: surface.as_ref(),
-                ..Default::default()
+                    let surface = windows
+                        .get_primary()
+                        .and_then(|window| window.raw_handle())
+                        .map(|wrapper| unsafe {
+                            let handle = wrapper.get_handle();
+                            instance.create_surface(&handle)
+                        });
+
+                    let request_adapter_options = wgpu::RequestAdapterOptions {
+                        power_preference: options.power_preference,
+                        compatible_surface: surface.as_ref(),
+                        ..Default::default()
+                    };
+
+                    let (render_device, render_queue, adapter_info, render_adapter) =
+                        futures_lite::future::block_on(renderer::initialize_renderer(
+                            &instance,
+                            &options,
+                            &request_adapter_options,
+                        ));
+
+                    (
+                        RenderInstance(instance),
+                        render_device,
+                        render_queue,
+                        adapter_info,
+                        render_adapter,
+                    )
+                }
+                (
+                    render_instance,
+                    render_device,
+                    render_queue,
+                    render_adapter_info,
+                    render_adapter,
+                ) => panic!("WGPU devices were inserted only partially, presence: render_instance={}, render_device={}, render_queue={}, render_adapter_info={}, render_adapter={}",
+                    render_instance.is_some(),
+                    render_device.is_some(),
+                    render_queue.is_some(),
+                    render_adapter_info.is_some(),
+                    render_adapter.is_some(),
+            ),
             };
-            let (device, queue, adapter_info, render_adapter) = futures_lite::future::block_on(
-                renderer::initialize_renderer(&instance, &options, &request_adapter_options),
-            );
+
             debug!("Configured wgpu adapter Limits: {:#?}", device.limits());
             debug!("Configured wgpu adapter Features: {:#?}", device.features());
             app.insert_resource(device.clone())
@@ -199,7 +249,7 @@ impl Plugin for RenderPlugin {
                 )
                 .add_stage(RenderStage::Cleanup, SystemStage::parallel())
                 .init_resource::<render_graph::RenderGraph>()
-                .insert_resource(RenderInstance(instance))
+                .insert_resource(render_instance)
                 .insert_resource(device)
                 .insert_resource(queue)
                 .insert_resource(render_adapter)
